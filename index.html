@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard IoT – Contrôle des LEDs</title>
+<style>
+  :root {
+    --bg: #14181f;
+    --panel: #1d232d;
+    --line: #2d3644;
+    --text: #e7ecf3;
+    --muted: #8b97a8;
+    --on: #f5b942;
+    --on-glow: rgba(245, 185, 66, .45);
+    --ok: #4cc38a;
+    --err: #ef6a5e;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    min-height: 100vh; padding: 28px 20px 40px;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; }
+  header {
+    display: flex; flex-wrap: wrap; gap: 12px;
+    justify-content: space-between; align-items: center; margin-bottom: 28px;
+  }
+  h1 { font-size: 1.5rem; font-weight: 650; letter-spacing: .2px; }
+  h1 small { display: block; font-size: .85rem; font-weight: 400; color: var(--muted); margin-top: 4px; }
+  .status {
+    display: flex; align-items: center; gap: 8px; font-size: .9rem;
+    background: var(--panel); border: 1px solid var(--line);
+    padding: 8px 14px; border-radius: 999px;
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--err); }
+  .status.online .dot { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+
+  .summary { display: flex; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+  .summary button {
+    background: var(--panel); color: var(--text); border: 1px solid var(--line);
+    padding: 10px 18px; border-radius: 8px; font-size: .9rem; cursor: pointer;
+  }
+  .summary button:hover { border-color: var(--on); }
+  .summary span { margin-left: auto; align-self: center; color: var(--muted); font-size: .9rem; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 22px 18px; display: flex; flex-direction: column; align-items: center; gap: 16px;
+    transition: border-color .25s, box-shadow .25s;
+  }
+  .card.on { border-color: var(--on); box-shadow: 0 0 22px -6px var(--on-glow); }
+  .bulb {
+    width: 64px; height: 64px; border-radius: 50%;
+    background: #2a313d; border: 2px solid var(--line);
+    transition: background .25s, box-shadow .25s, border-color .25s;
+  }
+  .card.on .bulb { background: var(--on); border-color: var(--on); box-shadow: 0 0 28px 6px var(--on-glow); }
+  .name { font-weight: 600; font-size: 1.05rem; }
+  .meta { color: var(--muted); font-size: .8rem; margin-top: -10px; }
+  .state { font-size: .9rem; font-weight: 600; color: var(--muted); }
+  .card.on .state { color: var(--on); }
+
+  /* Bouton */
+  .btn {
+    width: 100%; padding: 12px 0; border-radius: 10px; cursor: pointer;
+    font-size: 1rem; font-weight: 650; letter-spacing: .3px;
+    background: #3a4352; color: var(--text); border: 2px solid #3a4352;
+    transition: background .2s, color .2s, border-color .2s, transform .1s;
+  }
+  .btn:hover { border-color: var(--on); }
+  .btn:active { transform: scale(.97); }
+  .btn:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+  .card.on .btn { background: var(--on); border-color: var(--on); color: #1a1405; }
+
+
+  /* Maison 3D */
+  .house { position: relative; height: 440px; margin-bottom: 20px; overflow: hidden;
+    border: 1px solid var(--line); border-radius: 14px; background: #0f1319; }
+  .house canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+  .house canvas:active { cursor: grabbing; }
+  .lab { position: absolute; transform: translate(-50%, -50%); padding: 3px 10px; border-radius: 999px;
+    background: rgba(20,24,31,.88); border: 1px solid var(--line); font-size: .78rem;
+    white-space: nowrap; pointer-events: none; }
+  .lab.on { border-color: var(--on); color: var(--on); }
+  .hint { position: absolute; left: 12px; bottom: 10px; font-size: .75rem; color: var(--muted); pointer-events: none; }
+  .nogl { padding: 24px; color: var(--err); }
+  @media (max-width: 600px) { .house { height: 340px; } }
+  .log {
+    margin-top: 24px; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 14px 16px; font-family: Consolas, monospace;
+    font-size: .8rem; color: var(--muted); max-height: 150px; overflow-y: auto;
+  }
+  .log div + div { margin-top: 4px; }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Contrôle des LEDs<small>ESP32 · Firebase Realtime Database</small></h1>
+    <div class="status" id="status"><span class="dot"></span><span id="statusText">Connexion…</span></div>
+  </header>
+
+  <div class="summary">
+    <button id="allOn">Tout allumer</button>
+    <button id="allOff">Tout éteindre</button>
+    <span id="count">0 / 4 LEDs allumées</span>
+  </div>
+
+  <div class="house" id="house"><div id="labels"></div><div class="hint">Glissez pour tourner · molette pour zoomer · cliquez sur une pièce ou une lampe pour allumer/éteindre</div></div>
+
+  <div class="grid" id="grid"></div>
+  <div class="log" id="log"></div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyC58B3tUA-pj2wdvxMWoE4b-74JFRah8-I",
+    authDomain: "controle-leds-dd3aa.firebaseapp.com",
+    databaseURL: "https://controle-leds-dd3aa-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "controle-leds-dd3aa",
+    storageBucket: "controle-leds-dd3aa.firebasestorage.app",
+    messagingSenderId: "157494007752",
+    appId: "1:157494007752:web:b27a841ff6033feb6292fd",
+    measurementId: "G-7Y8RCMERWS"
+  };
+
+  const LEDS = [
+    { key: "Led_1", pin: 23, room: "Salon" },
+    { key: "Led_2", pin: 12, room: "Cuisine" },
+    { key: "Led_3", pin: 22, room: "Chambre" },
+    { key: "Led_4", pin: 19, room: "Salle de bain" }
+  ];
+  const ledState = {};   // état partagé avec la scène 3D
+
+  const grid = document.getElementById("grid");
+  const logBox = document.getElementById("log");
+  let db = null;
+
+  function log(msg) {
+    const d = document.createElement("div");
+    d.textContent = new Date().toLocaleTimeString("fr-FR") + "  " + msg;
+    logBox.prepend(d);
+    while (logBox.children.length > 30) logBox.lastChild.remove();
+  }
+
+  function render(key, value) {
+    const on = value === true;
+    ledState[key] = on;
+    document.getElementById("card-" + key).classList.toggle("on", on);
+    document.getElementById("btn-" + key).textContent = on ? "Éteindre" : "Allumer";
+    document.getElementById("state-" + key).textContent = on ? "ON" : "OFF";
+  }
+
+  function setLed(key, value) {
+    render(key, value);                       // retour visuel immédiat
+    if (!db) { log("Firebase non connecté : " + key + " non envoyé"); return; }
+    db.ref(key).set(value)
+      .then(() => log(key + " = " + value))
+      .catch(err => log("Erreur " + key + " : " + err.message));
+  }
+
+  // 1) Construire les 4 boutons D'ABORD (ils s'affichent même si Firebase échoue)
+  LEDS.forEach(l => {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.id = "card-" + l.key;
+    card.innerHTML = `
+      <div class="bulb"></div>
+      <div class="name">${l.key.replace("_", " ")}</div>
+      <div class="meta">${l.room} · GPIO ${l.pin}</div>
+      <div class="state" id="state-${l.key}">OFF</div>
+      <button class="btn" id="btn-${l.key}">Allumer</button>`;
+    grid.appendChild(card);
+    card.querySelector("button").addEventListener("click", () => {
+      setLed(l.key, !card.classList.contains("on"));
+    });
+  });
+
+  document.getElementById("allOn").onclick  = () => LEDS.forEach(l => setLed(l.key, true));
+  document.getElementById("allOff").onclick = () => LEDS.forEach(l => setLed(l.key, false));
+
+  // 2) Charger Firebase (gstatic, puis cdnjs en secours)
+  function loadScript(src) {
+    return new Promise((ok, ko) => {
+      const el = document.createElement("script");
+      el.src = src; el.onload = ok; el.onerror = () => ko(new Error(src));
+      document.head.appendChild(el);
+    });
+  }
+  async function loadFirebase() {
+    const sources = [
+      ["https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js",
+       "https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"],
+      ["https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-app-compat.min.js",
+       "https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-database-compat.min.js"]
+    ];
+    for (const [app, database] of sources) {
+      try { await loadScript(app); await loadScript(database); return true; }
+      catch (e) { log("Chargement impossible : " + e.message); }
+    }
+    return false;
+  }
+
+  function startFirebase() {
+    firebase.initializeApp(firebaseConfig);
+    db = firebase.database();
+
+    db.ref("/").on("value", snap => {
+      const data = snap.val() || {};
+      let n = 0;
+      LEDS.forEach(l => { if (data[l.key] === true) n++; render(l.key, data[l.key]); });
+      document.getElementById("count").textContent = n + " / " + LEDS.length + " LEDs allumées";
+    }, err => {
+      log("Lecture impossible : " + err.message);
+      document.getElementById("statusText").textContent = "Accès refusé : vérifiez les règles Firebase";
+    });
+
+    db.ref(".info/connected").on("value", snap => {
+      const ok = snap.val() === true;
+      document.getElementById("status").classList.toggle("online", ok);
+      document.getElementById("statusText").textContent = ok ? "Connecté à Firebase" : "Hors ligne";
+    });
+  }
+
+  // 3) Maison intelligente en 3D (three.js)
+  async function initHouse() {
+    const box = document.getElementById("house");
+    try { await loadScript("https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"); }
+    catch (e) { box.insertAdjacentHTML("afterbegin", '<p class="nogl">Vue 3D indisponible : three.js n\'a pas pu être chargé.</p>'); return; }
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0f1319);
+    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    box.prepend(renderer.domElement);
+    const cv = renderer.domElement;
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.32));
+    const sun = new THREE.DirectionalLight(0xaab8d0, 0.35);
+    sun.position.set(5, 12, 8); scene.add(sun);
+
+    const mat = c => new THREE.MeshStandardMaterial({ color: c, roughness: .85 });
+    const add = (w, h, d, x, y, z, c) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(c));
+      m.position.set(x, y, z); scene.add(m); return m;
+    };
+
+    // Sol extérieur
+    const ground = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), mat(0x161b23));
+    ground.rotation.x = -Math.PI / 2; ground.position.y = -0.05; scene.add(ground);
+
+    // Pièces : [clé, centre x, centre z, couleur du sol, lampe x, lampe z]
+    const ROOMS = {
+      Led_1: { x: -2, z: -2, floor: 0x7a6650, lx: -1.2, lz: -3.2 },
+      Led_2: { x:  2, z: -2, floor: 0x8d939b, lx:  1.2, lz: -3.2 },
+      Led_3: { x: -2, z:  2, floor: 0x5b6684, lx: -1.2, lz:  3.2 },
+      Led_4: { x:  2, z:  2, floor: 0x5f8f98, lx:  1.2, lz:  3.2 }
+    };
+
+    const pickables = [], parts = {};
+    const H = 1.3, T = 0.15, WC = 0xd9dde3;
+
+    Object.entries(ROOMS).forEach(([key, r]) => {
+      const f = new THREE.Mesh(new THREE.PlaneGeometry(3.96, 3.96), mat(r.floor));
+      f.rotation.x = -Math.PI / 2; f.position.set(r.x, 0, r.z);
+      f.userData.key = key; scene.add(f); pickables.push(f);
+    });
+
+    // Murs extérieurs
+    add(8.15, H, T, 0, H / 2, -4, WC);
+    add(8.15, 0.45, T, 0, 0.225, 4, WC);
+    add(T, H, 8.15, -4, H / 2, 0, WC);
+    add(T, H, 8.15, 4, H / 2, 0, WC);
+    // Cloisons avec portes
+    const vwall = (a, b) => add(T, H, b - a, 0, H / 2, (a + b) / 2, 0xc3c8d0);
+    const hwall = (a, b) => add(b - a, H, T, (a + b) / 2, H / 2, 0, 0xc3c8d0);
+    vwall(-4, -2.6); vwall(-1.4, 1.4); vwall(2.6, 4);
+    hwall(-4, -2.6); hwall(-1.4, 4);
+
+    // Meubles
+    add(2.0, 0.5, 0.8, -2.8, 0.25, -3.4, 0x3d5a80);   // canapé
+    add(1.0, 0.3, 0.6, -2.6, 0.15, -2.0, 0x4a3b2c);   // table basse
+    add(3.2, 0.85, 0.6, 2.2, 0.42, -3.6, 0x59606b);   // plan de travail
+    add(0.9, 0.25, 0.9, 2.4, 0.12, -1.8, 0x7a6650);   // îlot
+    add(1.7, 0.45, 2.3, -3.0, 0.22, 2.4, 0xe8e2d6);   // lit
+    add(1.7, 0.2, 0.6, -3.0, 0.55, 3.3, 0x9aa7c7);    // oreiller
+    add(1.3, 0.5, 2.3, 3.1, 0.25, 2.6, 0xf2f4f6);     // baignoire
+
+    // Lampes
+    Object.entries(ROOMS).forEach(([key, r]) => {
+      const g = new THREE.Group(); g.position.set(r.lx, 0, r.lz); scene.add(g);
+      const base = new THREE.Mesh(new THREE.CylinderGeometry(.25, .28, .06, 20), mat(0x2b2f36)); base.position.y = .03; g.add(base);
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(.03, .03, 1.15, 10), mat(0x2b2f36)); pole.position.y = .6; g.add(pole);
+      const bulbMat = new THREE.MeshStandardMaterial({ color: 0x8a8f98, emissive: 0xffc766, emissiveIntensity: 0, roughness: .4 });
+      const bulb = new THREE.Mesh(new THREE.SphereGeometry(.2, 24, 24), bulbMat); bulb.position.y = 1.35; g.add(bulb);
+      const halo = new THREE.Mesh(new THREE.SphereGeometry(.55, 24, 24),
+        new THREE.MeshBasicMaterial({ color: 0xffc766, transparent: true, opacity: 0, depthWrite: false }));
+      halo.position.y = 1.35; g.add(halo);
+      const hit = new THREE.Mesh(new THREE.SphereGeometry(.5, 8, 8), new THREE.MeshBasicMaterial({ visible: false }));
+      hit.position.y = 1.35; hit.userData.key = key; g.add(hit); pickables.push(hit);
+      const light = new THREE.PointLight(0xffc766, 0, 6.5); light.position.set(r.lx, 1.5, r.lz); scene.add(light);
+
+      const lab = document.createElement("div"); lab.className = "lab";
+      document.getElementById("labels").appendChild(lab);
+      parts[key] = { bulbMat, halo, light, lab, pos: new THREE.Vector3(r.lx, 2.0, r.lz), k: 0 };
+    });
+
+    // Caméra orbitale (souris / tactile)
+    let theta = 0.6, phi = 0.95, radius = 15;
+    const target = new THREE.Vector3(0, 0.4, 0);
+    const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+    let drag = null;
+    cv.style.touchAction = "none";
+    cv.addEventListener("pointerdown", e => { drag = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY }; cv.setPointerCapture(e.pointerId); });
+    cv.addEventListener("pointermove", e => {
+      if (!drag) return;
+      theta -= (e.clientX - drag.x) * 0.008;
+      phi = clamp(phi - (e.clientY - drag.y) * 0.006, 0.25, 1.4);
+      drag.x = e.clientX; drag.y = e.clientY;
+    });
+    cv.addEventListener("pointerup", e => {
+      if (drag && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 5) pick(e);
+      drag = null;
+    });
+    cv.addEventListener("wheel", e => { e.preventDefault(); radius = clamp(radius + e.deltaY * 0.01, 8, 26); }, { passive: false });
+
+    const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+    function pick(e) {
+      const r = cv.getBoundingClientRect();
+      ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+      ray.setFromCamera(ndc, camera);
+      const hit = ray.intersectObjects(pickables)[0];
+      if (hit) { const k = hit.object.userData.key; setLed(k, !ledState[k]); }
+    }
+
+    function resize() {
+      const w = box.clientWidth, h = box.clientHeight;
+      renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+    }
+    new ResizeObserver(resize).observe(box); resize();
+
+    const v = new THREE.Vector3();
+    (function frame() {
+      requestAnimationFrame(frame);
+      LEDS.forEach(l => {
+        const p = parts[l.key], on = ledState[l.key] === true;
+        p.k += ((on ? 1 : 0) - p.k) * 0.12;
+        p.light.intensity = p.k * 1.9;
+        p.bulbMat.emissiveIntensity = p.k * 1.6;
+        p.halo.material.opacity = p.k * 0.28;
+        v.copy(p.pos).project(camera);
+        p.lab.style.left = ((v.x * .5 + .5) * box.clientWidth) + "px";
+        p.lab.style.top = ((-v.y * .5 + .5) * box.clientHeight) + "px";
+        p.lab.textContent = l.room + " · " + (on ? "ON" : "OFF");
+        p.lab.classList.toggle("on", on);
+      });
+      camera.position.set(
+        target.x + radius * Math.sin(phi) * Math.sin(theta),
+        target.y + radius * Math.cos(phi),
+        target.z + radius * Math.sin(phi) * Math.cos(theta));
+      camera.lookAt(target);
+      renderer.render(scene, camera);
+    })();
+  }
+
+  initHouse();
+
+  const firebaseReady = typeof firebase !== "undefined" ? Promise.resolve(true) : loadFirebase();
+  firebaseReady.then(ok => {
+    if (ok) startFirebase();
+    else document.getElementById("statusText").textContent = "Firebase bloqué (ouvrez le fichier dans Chrome/Firefox)";
+  });
+</script>
+</body>
+</html>
